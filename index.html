@@ -263,8 +263,126 @@ const USERS = [
 ];
 
 // ============================================================
-// GOOGLE SHEET CSV URL — URL_EXPORT sheet ka link
+// SESSION MANAGEMENT — Max 2 devices per user
+// Uses Firebase Realtime Database (free tier)
 // ============================================================
+const FIREBASE_URL = 'https://salus-mis-default-rtdb.firebaseio.com'; // Replace with your Firebase URL
+const MAX_SESSIONS = 2;
+const SESSION_ID = Math.random().toString(36).substr(2, 12) + Date.now();
+
+async function getSessionsFromDB(username) {
+  try {
+    const res = await fetch(`${FIREBASE_URL}/sessions/${username}.json`);
+    const data = await res.json();
+    return data || {};
+  } catch(e) { return {}; }
+}
+
+async function writeSessionToDB(username, sessionId, info) {
+  try {
+    await fetch(`${FIREBASE_URL}/sessions/${username}/${sessionId}.json`, {
+      method: 'PUT',
+      body: JSON.stringify(info)
+    });
+  } catch(e) {}
+}
+
+async function deleteSessionFromDB(username, sessionId) {
+  try {
+    await fetch(`${FIREBASE_URL}/sessions/${username}/${sessionId}.json`, {
+      method: 'DELETE'
+    });
+  } catch(e) {}
+}
+
+async function clearAllSessionsFromDB(username) {
+  try {
+    await fetch(`${FIREBASE_URL}/sessions/${username}.json`, {
+      method: 'DELETE'
+    });
+  } catch(e) {}
+}
+
+async function checkAndRegisterSession(user) {
+  const username = user.username;
+  const sessions = await getSessionsFromDB(username);
+  const sessionList = Object.entries(sessions || {});
+
+  // Clean expired sessions (older than 24 hours)
+  const now = Date.now();
+  const activeSessions = sessionList.filter(([id, info]) => {
+    return info && (now - (info.time || 0)) < 24 * 60 * 60 * 1000;
+  });
+
+  if (activeSessions.length >= MAX_SESSIONS) {
+    // 3rd device trying to login — show alert
+    const deviceNames = activeSessions.map(([id, info]) =>
+      info.device || 'Unknown Device'
+    ).join('\n• ');
+
+    const choice = confirm(
+      `⚠️ SESSION LIMIT REACHED\n\n` +
+      `"${user.name}" is already logged in on ${activeSessions.length} device(s):\n• ${deviceNames}\n\n` +
+      `Maximum ${MAX_SESSIONS} devices allowed.\n\n` +
+      `Click OK to logout ALL previous sessions and login here.\n` +
+      `Click Cancel to abort.`
+    );
+
+    if (!choice) return false; // User cancelled
+
+    // Logout all previous sessions
+    await clearAllSessionsFromDB(username);
+    // Notify other tabs via localStorage broadcast
+    localStorage.setItem('salus_force_logout_' + username, Date.now().toString());
+    setTimeout(() => localStorage.removeItem('salus_force_logout_' + username), 3000);
+  }
+
+  // Register this session
+  const deviceInfo = {
+    time: now,
+    device: getDeviceName(),
+    sessionId: SESSION_ID
+  };
+  await writeSessionToDB(username, SESSION_ID, deviceInfo);
+  return true;
+}
+
+function getDeviceName() {
+  const ua = navigator.userAgent;
+  if (/mobile/i.test(ua)) return 'Mobile Device';
+  if (/tablet|ipad/i.test(ua)) return 'Tablet';
+  return 'Desktop/Laptop (' + (navigator.platform || 'Unknown') + ')';
+}
+
+// Listen for force logout from another device
+window.addEventListener('storage', (e) => {
+  if (!currentUser) return;
+  if (e.key === 'salus_force_logout_' + currentUser.username) {
+    // Another device cleared sessions — logout this device
+    showForceLogoutAlert();
+  }
+});
+
+// Also periodically check if our session is still valid (every 30 sec)
+setInterval(async () => {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(`${FIREBASE_URL}/sessions/${currentUser.username}/${SESSION_ID}.json`);
+    const data = await res.json();
+    if (!data) {
+      // Our session was removed — force logout
+      showForceLogoutAlert();
+    }
+  } catch(e) {}
+}, 30000);
+
+function showForceLogoutAlert() {
+  currentUser = null;
+  localStorage.removeItem('salus_user');
+  alert('⚠️ You have been logged out because someone logged in from another device and exceeded the session limit.');
+  show('login-screen');
+}
+
 const CSV_NAMES = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSddKV201pdu8VOG19UE2CWU_FwXyMEHYTj8HtHW_mozI-iG485YY_AbabqbXr3ufZTDBlV37Nj3wzZ/pub?gid=1829323048&single=true&output=csv';
 const CSV_URLS  = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSddKV201pdu8VOG19UE2CWU_FwXyMEHYTj8HtHW_mozI-iG485YY_AbabqbXr3ufZTDBlV37Nj3wzZ/pub?gid=2004263953&single=true&output=csv';
 
@@ -729,31 +847,82 @@ function show(id) {
   document.getElementById(id).classList.add('active');
 }
 
-function doLogin() {
+async function doLogin() {
   const u = document.getElementById('uname').value.trim();
   const p = document.getElementById('upass').value.trim();
   const user = USERS.find(x => x.username.toLowerCase() === u.toLowerCase() && x.password === p);
   if (!user) { document.getElementById('err-msg').style.display = 'block'; return; }
   document.getElementById('err-msg').style.display = 'none';
+
+  // Check & register session (handles multi-device limit)
+  const loginBtn = document.querySelector('.btn-login');
+  loginBtn.textContent = 'Checking...';
+  loginBtn.disabled = true;
+
+  const allowed = await checkAndRegisterSession(user);
+
+  loginBtn.textContent = 'Login';
+  loginBtn.disabled = false;
+
+  if (!allowed) return; // User cancelled on 3rd device
+
   currentUser = user;
-  const w = 'Welcome, ' + user.name;
-  document.getElementById('topbar-user').textContent = w;
-  document.getElementById('topbar-user2').textContent = w;
+  localStorage.setItem('salus_user', JSON.stringify({...user, sessionId: SESSION_ID}));
+  setUserUI(user);
   show('dept-screen');
   loadSheet();
 }
+
+function setUserUI(user) {
+  const w = 'Welcome, ' + user.name;
+  ['topbar-user','topbar-user2','topbar-user3'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = w;
+  });
+}
+
 ['uname','upass'].forEach(id =>
   document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); })
 );
 
-function doLogout() {
+async function doLogout() {
+  if (currentUser) {
+    // Remove this session from DB
+    await deleteSessionFromDB(currentUser.username, SESSION_ID);
+  }
   currentUser = null;
+  localStorage.removeItem('salus_user');
   document.getElementById('uname').value = '';
   document.getElementById('upass').value = '';
   show('login-screen');
 }
 
 function goBack() { show('dept-screen'); }
+
+// Auto-restore session on page load/refresh
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const saved = localStorage.getItem('salus_user');
+    if (saved) {
+      const savedUser = JSON.parse(saved);
+      const valid = USERS.find(x => x.username === savedUser.username && x.password === savedUser.password);
+      if (valid) {
+        // Re-register this session (refresh counts as same session)
+        await writeSessionToDB(valid.username, SESSION_ID, {
+          time: Date.now(),
+          device: getDeviceName(),
+          sessionId: SESSION_ID
+        });
+        currentUser = valid;
+        setUserUI(valid);
+        show('dept-screen');
+        loadSheet();
+        return;
+      }
+    }
+  } catch(e) {}
+  show('login-screen');
+});
 </script>
 </body>
 </html>
