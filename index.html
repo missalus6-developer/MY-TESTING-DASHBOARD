@@ -238,7 +238,10 @@
             <th>Checklist / Sheets</th>
             <th>Google Forms</th>
             <th>MIS Score</th>
-            <th>Training Video</th>
+            <th>🎬 Video (IMS)</th>
+            <th>🎬 Video (FMS)</th>
+            <th>🎬 Video (Checklist)</th>
+            <th>🎬 Video (Sheets)</th>
           </tr>
         </thead>
         <tbody id="links-tbody"></tbody>
@@ -265,13 +268,16 @@ const USERS = [
 const CSV_NAMES = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSddKV201pdu8VOG19UE2CWU_FwXyMEHYTj8HtHW_mozI-iG485YY_AbabqbXr3ufZTDBlV37Nj3wzZ/pub?gid=1829323048&single=true&output=csv';
 const CSV_URLS  = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSddKV201pdu8VOG19UE2CWU_FwXyMEHYTj8HtHW_mozI-iG485YY_AbabqbXr3ufZTDBlV37Nj3wzZ/pub?gid=2004263953&single=true&output=csv';
 
-// Column indexes (0-based) in your sheet:
-// 0=Dept, 1=Process, 2=PC, 3=Incharge, 4=Executive, 5=FMS, 6=IMS, 7=PMS, 8=Checklist, 9=Sheets, 10=Forms, 11=MIS, 12=Video
-// Column mapping (0-based) matching URL_EXPORT sheet:
-// A=0 DEPARTMENTS, B=1 LIST OF ALL PROCESS, C=2 PC, D=3 PROCESS INCHARGE,
-// E=4 WHO IS THE EXECUTIVE, F=5 FMS, G=6 IMS SHEET, H=7 PMS/CHECKLIST,
-// I=8 GOOGLE DRIVE/SHEETS, J=9 GOOGLE FORMS, K=10 MIS SCORES, L=11 TRAINING VIDEO
-const COL = { dept:0, process:1, pc:2, incharge:3, exec:4, fms:5, ims:6, checklist:7, sheets:8, forms:9, mis:10, video:11 };
+// Column mapping (0-based):
+// A=0 DEPT, B=1 PROCESS, C=2 PC, D=3 INCHARGE, E=4 EXECUTIVE,
+// F=5 FMS, G=6 IMS SHEET, H=7 CHECKLIST, I=8 GOOGLE DRIVE/SHEETS,
+// J=9 GOOGLE FORMS, K=10 MIS SCORES,
+// L=11 VIDEO-IMS, M=12 VIDEO-FMS, N=13 VIDEO-CHECKLIST, O=14 VIDEO-SHEETS
+const COL = {
+  dept:0, process:1, pc:2, incharge:3, exec:4,
+  fms:5, ims:6, checklist:7, sheets:8, forms:9, mis:10,
+  vid_ims:11, vid_fms:12, vid_checklist:13, vid_sheets:14
+};
 
 const ICONS = {
   'EA': `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -610,7 +616,7 @@ function labelFromUrl(url, type, colName) {
   // If colName given use it as label
   if (colName && colName.trim() && colName.toUpperCase() !== 'NA') return colName.trim();
   if (url.includes('forms.gle') || url.includes('/forms/')) return 'Open Form';
-  if (url.includes('youtu')) return 'Watch Video';
+  if (url.includes('youtu') || url.includes('youtube')) return 'Watch Video';
   if (url.includes('drive.google') && url.includes('/file/')) return 'Open File';
   if (url.includes('drive.google') && url.includes('/drive/')) return 'Open Drive';
   return 'Open Sheet';
@@ -646,15 +652,17 @@ function chip(val, type, labelOverride) {
     cls = 'chip-form'; icon = '📋';
   } else if (type === 'mis') {
     cls = 'chip-mis'; icon = '📊';
-  } else if (type === 'video' || url.includes('youtu')) {
-    cls = 'chip-video'; icon = '▶';
-  } else if (url.includes('drive.google') && url.includes('/file/')) {
+  } else if (type === 'video' || url.includes('youtu') || url.includes('youtube')) {
+    cls = 'chip-video'; icon = '▶️';
+  } else if (url.includes('drive.google') && (url.includes('/file/') || url.includes('/drive/'))) {
     cls = 'chip-video'; icon = '📁';
+  } else if (url.includes('script.google') || url.includes('macros')) {
+    cls = 'chip-sheet'; icon = '⚙️';
   } else {
     cls = 'chip-sheet'; icon = '🔗';
   }
 
-  const displayLabel = name || labelOverride || 'Open';
+  const displayLabel = name || labelOverride || (type === 'video' ? 'Watch' : 'Open');
   return `<a class="chip ${cls}" href="${url}" target="_blank" rel="noopener">${icon} ${displayLabel}</a>`;
 }
 
@@ -703,7 +711,10 @@ function openDept(dept) {
     </div></td>
     <td><div class="chips">${multiChip(r[COL.forms],    'forms', smartLabel(r[COL.forms]))}</div></td>
     <td><div class="chips">${multiChip(r[COL.mis],      'mis',   smartLabel(r[COL.mis]))}</div></td>
-    <td><div class="chips">${multiChip(r[COL.video],    'video', smartLabel(r[COL.video]))}</div></td>
+    <td><div class="chips">${multiChip(r[COL.vid_ims],      'video', smartLabel(r[COL.vid_ims]))}</div></td>
+    <td><div class="chips">${multiChip(r[COL.vid_fms],      'video', smartLabel(r[COL.vid_fms]))}</div></td>
+    <td><div class="chips">${multiChip(r[COL.vid_checklist], 'video', smartLabel(r[COL.vid_checklist]))}</div></td>
+    <td><div class="chips">${multiChip(r[COL.vid_sheets],   'video', smartLabel(r[COL.vid_sheets]))}</div></td>
   </tr>`;
   }).join('');
 
